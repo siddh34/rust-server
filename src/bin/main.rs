@@ -9,7 +9,9 @@ fn main() {
 
     let pool = ThreadPool::new(4);
 
-    for stream in listner.incoming().take(2){
+    // incoming().take() may let server terminated
+
+    for stream in listner.incoming(){
         let stream = stream.unwrap();
 
         pool.execute(|| {
