@@ -3,10 +3,15 @@ use std::{thread, sync::{mpsc, Mutex, Arc}};
 /// create a new thread pool
 pub  struct ThreadPool{
     workers: Vec<Worker>,
-    sender: mpsc::Sender<Job>,
+    sender: mpsc::Sender<Message>,
 }
 
 type Job = Box<dyn FnOnce() + Send + 'static>;
+
+enum Message {
+    NewJob(Job),
+    Terminate
+}
 
 impl ThreadPool {
     pub fn new(size: usize) -> ThreadPool {
@@ -29,7 +34,7 @@ impl ThreadPool {
     where 
     F: FnOnce() + Send + 'static {
         let job = Box::new(f);
-        self.sender.send(job).unwrap();
+        self.sender.send(Message::NewJob(job)).unwrap();
     }
 
     pub fn getworkercapacity(&self){
@@ -37,16 +42,35 @@ impl ThreadPool {
     }
 }
 
+impl Drop for ThreadPool {
+    fn drop(&mut self){
+
+        println!("Sending terminate message to all workers");
+
+        for _ in &self.workers {
+            self.sender.send(Message::Terminate).unwrap();
+        }
+
+        for worker in &mut self.workers {
+            println!("Shuting down worker {}",worker.id);
+
+            if let Some(thread) = worker.thread.take() {
+                thread.join().unwrap();
+            }
+        }
+    }
+}
+
 #[derive()]
 struct Worker {
     id: usize,
-    thread: thread::JoinHandle<()>
+    thread: Option<thread::JoinHandle<()>>
 }
 
 impl Worker {
-    fn new(id: usize, receiver: Arc<Mutex<mpsc::Receiver<Job>>>) -> Worker {
+    fn new(id: usize, receiver: Arc<Mutex<mpsc::Receiver<Message>>>) -> Worker {
         let thread = thread::spawn(move || loop {
-            let job = receiver
+            let message = receiver
             .lock()
             .unwrap()
             .recv()
@@ -54,9 +78,18 @@ impl Worker {
             
             println!("worker {} got a job\n Executing!",id);
 
-            job();
+            match message {
+                Message:: NewJob(job) => {
+                    println!("Worker {} got a job; executing.",id);
+                    job();
+                }
+                Message::Terminate => {
+                    println!("Worker {} was told to terminate",id);
+                    break;
+                }
+            }
         });
 
-        Worker {id,thread}
+        Worker {id,thread: Some(thread)}
     }
 }
